@@ -2,7 +2,7 @@ import requests
 import os
 from PIL import Image
 from random import uniform
-
+from math import radians, cos
 
 # Мой апи ключ geocoder'a
 api_key = '42838384-31ec-40af-b8a9-354fb89aa371'
@@ -31,9 +31,25 @@ def get_coordinates(place: str, format: str="json"):
         object = data["response"]["GeoObjectCollection"]["featureMember"][0]["GeoObject"]
         coords = object["Point"]["pos"]
         return list(map(float, coords.split()))
-    
 
-def get_map(center: tuple[int], size: tuple[int]=[600, 450], way: tuple[int]=False, spn: str="0.005", map_format: str="map", pt: str=None):
+
+def get_territory(place: str):
+    """
+    Функция для получения территории искомого обьекта
+    """
+    link = f'http://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={place}&format=json'
+    response = requests.get(link)
+    print(link)
+    if response:
+        data = response.json()
+        object = data["response"]["GeoObjectCollection"]["featureMember"][0]
+        coords = object["GeoObject"]["boundedBy"]["Envelope"]
+        result = [list(map(float, coords["lowerCorner"].split())), list(map(float, coords["upperCorner"].split()))]
+        return result
+
+
+def get_map(center: tuple[int], size: tuple[int]=[600, 450], way: tuple[int]=False, spn: tuple=["0.005", "0.005"], 
+            map_format: str="map", pt: str=None):
     """
     Функция для создания изображения карты по переданным аргументам
 
@@ -46,8 +62,9 @@ def get_map(center: tuple[int], size: tuple[int]=[600, 450], way: tuple[int]=Fal
     # Преобразуем параметры для удобства пользования
     x, y = map(str, center)
     width, height = map(str, size)
+    x_span, y_span = spn
 
-    map_link = f"https://static-maps.yandex.ru/1.x/?l={map_format}&ll={x},{y}&size={width},{height}&spn={spn},{spn}"
+    map_link = f"https://static-maps.yandex.ru/1.x/?l={map_format}&ll={x},{y}&size={width},{height}&spn={x_span},{y_span}"
     # Если передан дополнительный маршрут
     if way:
         map_link += f"&pl={','.join(list(map(str, way)))}"
@@ -104,7 +121,7 @@ def get_place(coord: tuple[int], type_place: str="house"):
         return dist
     
 
-def search_business(coord: list[int], type_business: str, count: int=10):
+def search_business(coord: list[float], type_business: str, count: int=10, info: bool=False):
     """
     Функция нахождения объектов инфраструктуры города
     Параметр type_business принимает тип искомого объкта,
@@ -113,15 +130,18 @@ def search_business(coord: list[int], type_business: str, count: int=10):
     search_api_server = "https://search-maps.yandex.ru/v1/"
     search_params = {
         "apikey": business_api,
-        "text": "аптека",
+        "text": type_business,
         "lang": "ru_RU",
         "ll": ",".join(list(map(str, coord))),
-        "type": "biz"
+        "type": "biz",
+        "results": str(count)
     }
     response = requests.get(search_api_server, params=search_params)
     if response:
         list_points = []
         data = response.json()
+        if info:
+            return data
         for index, business in enumerate(data["features"]):
             point = f'{business["geometry"]["coordinates"][0]},{business["geometry"]["coordinates"][1]},pm2'
             try:
@@ -134,3 +154,23 @@ def search_business(coord: list[int], type_business: str, count: int=10):
                 point += "grm"
             list_points.append(point)
         return f"pt={'~'.join(list_points)}"
+    
+
+def get_territory_business(place: str, type: str):
+    """
+    Функция возвращает координаты левого верхнего и правого нижнего угла
+    искомой территории
+    """
+    data = search_business(get_coordinates(place), type_business=type, count=1, info=True)
+    coords = data["properties"]["ResponseMetaData"]["SearchResponse"]["boundedBy"]
+    return coords
+
+
+def generate_spn(coords: list[list[int]]):
+    """
+    Функция определяющее значение spn исходя из макчимального размера объкта
+    """
+    print(coords)
+    x_span = str(abs(coords[0][0] - coords[1][0]) / 2.0)
+    y_span = str((abs(coords[0][1] * cos(radians(coords[0][1])) - coords[1][1] * cos(radians(coords[1][1]))) ) / 2.0)
+    return x_span, y_span
